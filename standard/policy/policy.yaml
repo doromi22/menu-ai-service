@@ -1,4 +1,4 @@
-policy_version: "food_integrity_1.0.1"
+policy_version: "food_integrity_1.0.2"
 # policy_hash intentionally NOT stored in this file - a file cannot correctly
 # hash itself (the hash field would have to include its own value). Instead,
 # standard/policy/loader.py computes sha256 over this file's raw bytes at
@@ -48,12 +48,18 @@ layout:
 # so there is nothing to tag - a boolean check doesn't have a "how far past
 # the line" concept a multiplier could act on.
 #
-# Every numeric threshold below is left `null` (REVIEW-only) for the
-# Phase-1 MVP: unlike segmentation's max_food_area_ratio (a property of the
-# *source photo* the spec explicitly treats as unrecoverable past a point),
-# a mask/content/appearance/layout drift here is caused by the pipeline's
-# own transform - arguably always worth a human's eyes rather than an
-# automatic discard, until real §10 data says otherwise.
+# REJECT here never discards a photo: it only hands the violation to the
+# Retry state machine (standard/retry/retry_policy.yaml), which ends in PASS
+# or, when it can't fix it, REVIEW.
+#
+# Rule for what gets retried: only what a computer can judge on its own -
+# a measurable overshoot with an obvious fix. Color gain qualifies (the
+# gain over the original is a number, and a milder grade fixes it; on real
+# photos pasta_005 went REVIEW -> one conservative-color retry -> PASS).
+# Everything else stays `null` (REVIEW-only) and goes to a human: the HF
+# error formula is still an unvalidated placeholder, and whether a
+# recomputed layout is actually better is not something the pipeline can
+# tell. Retrying those would add complexity without trustworthy results.
 severity:
   mask:
     min_iou:
@@ -65,9 +71,9 @@ severity:
       reject_multiplier: null
   food:
     max_saturation_gain:
-      reject_multiplier: null
+      reject_multiplier: 1.0
     max_luminance_gain:
-      reject_multiplier: null
+      reject_multiplier: 1.0
   layout:
     max_scale_delta_per_object:
       reject_multiplier: null

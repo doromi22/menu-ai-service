@@ -1,0 +1,6 @@
+# The policy loader hashes policy.yaml's raw bytes and compares them with
+# policy.lock.json. Line-ending conversion on checkout (core.autocrlf on
+# Windows) would change those bytes and make the API refuse to start, so
+# always check these files out with LF.
+standard/policy/*.yaml text eol=lf
+standard/policy/*.json text eol=lf

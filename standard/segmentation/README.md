@@ -129,9 +129,13 @@ visible stair-steps.
 
 `FoodObject` now also carries `alpha` / `alpha_origin`: the backend's own
 soft alpha, **used only for compositing** (`TemplateRenderer.render` blends
-back to front). Everything that makes a decision - area/boundary/hole
-metrics, layout, shadows, every validator module - still reads the hard
-`mask`, so no PASS/REVIEW/REJECT verdict can move because of this. Built in
+back to front). The segmentation metrics, layout and shadows still read the
+hard `mask`. The validator also selects pixels with the hard mask, but it
+measures the *rendered* image - and inside the mask's inner rim those pixels
+are now blended with the template background. So a validator verdict CAN
+move: donburi_010 on `T01_warm_ivory` went from REVIEW (saturation gain) to
+PASS, because blending with the light background lowers the measured
+saturation along the rim; on `T04_dark_premium` it stays REVIEW. Built in
 `SegmentationGate._soft_alpha`, restricted to a rim of
 `max(soft_edge_min_band_px, ceil(longer_side * soft_edge_band_ratio))` px
 around the hard mask's boundary:
@@ -141,8 +145,9 @@ around the hard mask's boundary:
   component or a speck the noise floor dropped can't reappear as a ghost
 - values below `soft_edge_alpha_floor` are dropped (background haze)
 
-Measured on the 13 real ramen photos x 6 templates: **0 of 78 verdicts
-changed** vs. the hard-edged render (60 PASS / 18 REVIEW both), and zoomed
+Measured on the 13 real ramen photos x 6 templates: 0 of 78 verdicts
+changed vs. the hard-edged render (60 PASS / 18 REVIEW both) - true for that
+set, but as above not guaranteed for every photo. Zoomed
 before/after crops of chopstick edges (ramen_003, ramen_008) show the
 stair-steps replaced by a smooth ramp. Tradeoff: on very large photos
 (e.g. 3024x4032) the ramp is the model's own resolution upsampled ~3x, so
