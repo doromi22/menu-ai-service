@@ -16,16 +16,7 @@
 
 ## パイプライン
 
-```mermaid
-flowchart LR
-    U[Laravel アップロード] -->|キュージョブ| API[POST /v1/standard/process]
-    API --> G[Segmentation Gate<br/>BiRefNet]
-    G -->|REJECT| M[メタデータのみ]
-    G -->|PASS / REVIEW| L[レイアウト] --> S[影] --> C[色補正] --> R[テンプレート描画]
-    R --> V[整合性検証]
-    V -->|パラメータで直せる違反| RT[再試行ステートマシン] --> R
-    V --> O[画像 + メタデータ]
-```
+![Standard パイプライン: 写真 → Segmentation Gate → レイアウト → 影 → 色補正 → テンプレート描画 → 整合性検証 → 画像とメタデータ](docs/images/pipeline.svg)
 
 - **Segmentation Gate**（`standard/segmentation/`）: 料理を切り抜き、PASS / REVIEW / REJECT と機械可読な理由コード（料理が小さすぎる、フレーム端に接している、穴がある など）を返します。バックエンド自体の障害は `is_infra_error` 付きの REJECT として区別し、再試行は経過時間の予算内に制限しているため、API のタイムアウトを超えることはありません。
 - **整合性検証**（`standard/validator/`）: 加盟店が実際に受け取る画像（JPEG 圧縮後）に対して 4 つのモジュールで検査します。マスクの整合性、期待される補正結果と比べた細部の欠落・捏造、元写真と比べた彩度・輝度の上昇、レイアウト上の順位・重なりの変化です。
