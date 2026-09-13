@@ -172,7 +172,7 @@ def test_retry_recompute_translation_path_keeps_module_b_aligned(tmp_path, monke
     `CONTENT_HF_ERROR`, which a correctly-aligned comparison must not.
 
     Role assignment is monkeypatched to name two roles (`main` + `side`)
-    because the harness's real stand-in (`_assign_stand_in_roles`) only
+    because the harness's real stand-in (`assign_stand_in_roles`) only
     ever names one - through the real harness today, `recompute_translation`
     is unreachable (OCCLUSION_CHANGED/OBJECT_AREA_RANK_REVERSED, the only
     two reasons mapped to it, both require 2+ named roles - see §11
@@ -194,7 +194,7 @@ def test_retry_recompute_translation_path_keeps_module_b_aligned(tmp_path, monke
         result[ordered[1]] = replace(objects[ordered[1]], semantic_role="side", role_confidence=0.9, z_index=0)
         return result
 
-    monkeypatch.setattr(pipeline_module, "_assign_stand_in_roles", _two_role_assign)
+    monkeypatch.setattr(pipeline_module, "assign_stand_in_roles", _two_role_assign)
 
     recompute_calls = []
     original_recompute = state_machine_module.recompute_translation
@@ -335,3 +335,71 @@ def test_harness_survives_a_pipeline_crash_outside_segmentation(tmp_path):
     assert "RuntimeError" in error_log_text
     assert "simulated pipeline crash outside segmentation" in error_log_text
     assert "Traceback" in error_log_text
+
+
+def test_segmentation_runs_once_per_photo_not_once_per_template(tmp_path):
+    """Segmentation doesn't depend on the template, and a real BiRefNet call
+    costs seconds - re-running it for every template multiplied a batch's
+    runtime by the template count."""
+    input_dir = tmp_path / "photos"
+    output_dir = tmp_path / "output"
+    input_dir.mkdir()
+    _save_test_image(input_dir / "ramen_001.jpg")
+    _save_test_image(input_dir / "ramen_002.jpg", food_bbox=(20, 20, 79, 79))
+
+    class _CountingBackend(_ThresholdBackend):
+        calls = 0
+
+        def infer_mask(self, image_rgb: np.ndarray) -> np.ndarray:
+            type(self).calls += 1
+            return super().infer_mask(image_rgb)
+
+    templates = {key: TEMPLATES[key] for key in ("T01_warm_ivory", "T02_cool_white", "T04_dark_premium")}
+    records = run_harness(
+        input_dir,
+        output_dir,
+        output_dir / "run_results.csv",
+        output_dir / "matrix_report.csv",
+        output_dir / "errors.log",
+        segmentation_backend=_CountingBackend(),
+        policy=_test_policy(),
+        retry_config=_test_retry_config(),
+        templates=templates,
+    )
+
+    assert len(records) == 6
+    assert _CountingBackend.calls == 2
+
+
+def test_a_failed_segmentation_is_not_reused_for_the_next_template(tmp_path):
+    """Only successful inferences are reused: a transient backend failure on
+    one template must not turn every remaining template into a REJECT."""
+    input_dir = tmp_path / "photos"
+    output_dir = tmp_path / "output"
+    input_dir.mkdir()
+    _save_test_image(input_dir / "ramen_001.jpg")
+
+    class _FailsOnceBackend(_ThresholdBackend):
+        calls = 0
+
+        def infer_mask(self, image_rgb: np.ndarray) -> np.ndarray:
+            type(self).calls += 1
+            if type(self).calls == 1:
+                raise RuntimeError("transient failure")
+            return super().infer_mask(image_rgb)
+
+    records = run_harness(
+        input_dir,
+        output_dir,
+        output_dir / "run_results.csv",
+        output_dir / "matrix_report.csv",
+        output_dir / "errors.log",
+        segmentation_backend=_FailsOnceBackend(),
+        policy=_test_policy(),
+        retry_config=_test_retry_config(),
+        templates={key: TEMPLATES[key] for key in ("T01_warm_ivory", "T02_cool_white")},
+        max_backend_retries=0,
+        backend_retry_backoff_seconds=0,
+    )
+
+    assert [r.validator_status for r in records] == ["REJECT", "PASS"]

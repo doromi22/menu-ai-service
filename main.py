@@ -8,16 +8,16 @@ from optimum.onnxruntime import ORTStableDiffusionInpaintPipeline
 
 app = FastAPI(title="MenuAI ONNX Runtime Engine")
 
-# 1. ONNX 가속 정밀 세그멘테이션 세션
-# rembg 내부가 onnxruntime-gpu로 최적화되어 구동됩니다.
+# 1. ONNX-accelerated segmentation session
+# rembg runs on onnxruntime-gpu internally.
 rembg_session = new_session("birefnet-general")
 
-# 2. ONNX Inpainting 파이프라인 로드 (경량 ONNX 추론 전용)
-# 첫 실행 시 ONNX 변환 가중치를 로드합니다.
+# 2. ONNX inpainting pipeline (lightweight ONNX inference only)
+# Loads the converted ONNX weights on first run.
 pipe = ORTStableDiffusionInpaintPipeline.from_pretrained(
     "runwayml/stable-diffusion-inpainting",
     export=False,
-    provider="CUDAExecutionProvider"  # DirectML 사용 시 DmlExecutionProvider
+    provider="CUDAExecutionProvider"  # DmlExecutionProvider when using DirectML
 )
 
 COMMON_NEGATIVE = (
@@ -48,26 +48,26 @@ async def generate_food_scene(
     contents = await image.read()
     init_image = Image.open(io.BytesIO(contents)).convert("RGB")
 
-    # 1. 512x512 또는 768x768 표준 해상도 리사이즈 (ONNX 인페인팅 최적 비율)
+    # 1. Resize to 512x512 or 768x768 (what the ONNX inpainting model expects)
     init_image = ImageOps.contain(init_image, (768, 768))
     w, h = (init_image.width // 8) * 8, (init_image.height // 8) * 8
     init_image = init_image.resize((w, h), Image.Resampling.LANCZOS)
 
-    # 2. BiRefNet 누끼 추출
+    # 2. Cut out the dish with BiRefNet
     rgba = remove(init_image, session=rembg_session)
     alpha = rgba.split()[3]
 
-    # 3. 마스크 생성 및 미세 경계 확장(Dilation)
+    # 3. Build the mask and dilate its edge slightly
     dilated_alpha = alpha.filter(ImageFilter.MaxFilter(size=5))
     mask_image = ImageOps.invert(dilated_alpha)
 
-    # 4. 프롬프트 매핑
+    # 4. Map the preset to a prompt
     preset_key = "ramen" if "ramen" in prompt.lower() or "stone" in prompt.lower() else (
         "cafe" if "cafe" in prompt.lower() or "bright" in prompt.lower() else "izakaya"
     )
     pos_prompt, neg_prompt = PROMPT_PRESETS[preset_key]
 
-    # 5. ONNX 고속 추론
+    # 5. ONNX inference
     generated_scene = pipe(
         prompt=pos_prompt,
         negative_prompt=neg_prompt,
@@ -77,7 +77,7 @@ async def generate_food_scene(
         guidance_scale=7.5
     ).images[0]
 
-    # 6. 음식 본체 원본 100% 덮어쓰기 (경품표시법 준수)
+    # 6. Paste the original food pixels back over the result (Japan's Act against Unjustifiable Premiums and Misleading Representations)
     final_output = generated_scene.copy()
     final_output.paste(init_image, (0, 0), alpha)
 

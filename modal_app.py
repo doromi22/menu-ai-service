@@ -115,7 +115,7 @@ class FoodRenderer:
         w, h = (raw_image.width // 8) * 8, (raw_image.height // 8) * 8
         raw_image = raw_image.resize((w, h), Image.Resampling.LANCZOS)
 
-        # 1. 누끼 추출
+        # 1. Cut out the dish
         rgba_dish = remove(raw_image, session=self.rembg_session)
         dish_rgb = rgba_dish.convert("RGB")
         dish_alpha = rgba_dish.split()[3]
@@ -131,13 +131,13 @@ class FoodRenderer:
         angle_key = angle if angle in ANGLE_MODIFIERS else "45"
         final_prompt = f"{PROMPT_PRESETS[preset_key]}, {ANGLE_MODIFIERS[angle_key]}"
 
-        # 2. 음식 원본 화질 펌핑 (후반 덮어쓰기용)
+        # 2. Enhance the original food pixels (pasted back at the end)
         dish_enhanced = dish_rgb.copy()
         dish_enhanced = ImageEnhance.Color(dish_enhanced).enhance(1.2)
         dish_enhanced = ImageEnhance.Contrast(dish_enhanced).enhance(1.1)
-        dish_enhanced = ImageEnhance.Sharpness(dish_enhanced).enhance(1.5) # 선명도를 높여 밥알 보존
+        dish_enhanced = ImageEnhance.Sharpness(dish_enhanced).enhance(1.5) # sharpen to keep rice grains legible
 
-        # 3. 깨끗한 배경 생성
+        # 3. Generate a clean background
         with torch.inference_mode():
             generated_bg = self.pipe_t2i(
                 prompt=final_prompt,
@@ -148,7 +148,7 @@ class FoodRenderer:
                 guidance_scale=0
             ).images[0].convert("RGBA")
 
-        # 4. 물리적 콜라주 (그림자 포함)
+        # 4. Collage the dish onto it (with shadow)
         shadow_layer = Image.new("RGBA", (w, h), (0, 0, 0, 0))
         
         ambient_mask = dish_alpha.filter(ImageFilter.GaussianBlur(radius=15))
@@ -165,23 +165,23 @@ class FoodRenderer:
         collage_canvas.paste(dish_enhanced, (0, 0), soft_dish_alpha)
         collage_rgb = collage_canvas.convert("RGB")
 
-        # 5. 글로벌 하모나이제이션 (AI를 이용해 빛과 그림자 융합)
+        # 5. Global harmonization: img2img blends light and shadow
         with torch.inference_mode():
             harmonized_image = self.pipe_i2i(
                 prompt=final_prompt,
                 negative_prompt=COMMON_NEGATIVE,
                 image=collage_rgb,
                 num_inference_steps=4,
-                strength=0.30, # 30% 개입 (외곽선 융합)
+                strength=0.30, # 30% strength (blends the outline)
                 guidance_scale=0
             ).images[0].convert("RGBA")
 
-        # 6. [NEW] 코어 텍스처 프로텍션 (내부 화질 원상복구)
-        # 마스크를 안쪽으로 11픽셀 정도 깎아내서 가장자리는 AI 합성을 유지하고 중심부만 보호합니다.
+        # 6. Core texture protection: restore the original interior
+        # Erode the mask ~11px so the edge keeps the AI blend and only the interior is protected.
         shrunk_alpha = dish_alpha.filter(ImageFilter.MinFilter(11)) 
         core_soft_mask = shrunk_alpha.filter(ImageFilter.GaussianBlur(radius=5))
         
-        # AI가 렌더링한 결과물 위에 중심부 밥알/질감을 원본으로 덮어버립니다.
+        # Paste the original interior (rice grains, texture) over the AI render.
         harmonized_image.paste(dish_enhanced.convert("RGBA"), (0, 0), core_soft_mask)
 
         buffer = io.BytesIO()

@@ -28,7 +28,7 @@ from PIL import Image
 from standard.color.grade import apply_grade
 from standard.color.presets import STANDARD, food_params_for
 from standard.layout.engine import LayoutEngine
-from standard.pipeline import _assign_stand_in_roles
+from standard.pipeline import assign_stand_in_roles
 from standard.segmentation.backend import BiRefNetBackend
 from standard.segmentation.gate import SegmentationGate
 from standard.templates.definitions import TEMPLATES
@@ -60,7 +60,7 @@ def _objects(image_rgb: np.ndarray, backend: BiRefNetBackend):
     result = SegmentationGate(backend).run(image_rgb)
     if not result.food_objects:
         raise RuntimeError(f"segmentation produced no objects ({result.result.value}: {result.reasons})")
-    return _assign_stand_in_roles(result.food_objects)
+    return assign_stand_in_roles(result.food_objects)
 
 
 def _render(image_rgb: np.ndarray, objects, template_id: str) -> np.ndarray:

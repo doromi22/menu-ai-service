@@ -1,4 +1,4 @@
-"""CSV + category x template matrix reporting (spec §10's "탈락자 제거" goal)."""
+"""CSV + category x template matrix reporting (spec §10's goal: weed out templates that fail too often)."""
 from __future__ import annotations
 
 import csv

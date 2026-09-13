@@ -55,7 +55,7 @@ def _encode_decode_jpeg(image_array: np.ndarray, quality: int) -> np.ndarray:
     return np.asarray(Image.open(buffer).convert("RGB"))
 
 
-def _assign_stand_in_roles(objects: list[FoodObject]) -> list[FoodObject]:
+def assign_stand_in_roles(objects: list[FoodObject]) -> list[FoodObject]:
     if not objects:
         return []
     largest = max(range(len(objects)), key=lambda i: objects[i].area)
@@ -122,7 +122,7 @@ def run_pipeline(
             metrics=seg_result.metrics,
         )
 
-    objects = _assign_stand_in_roles(seg_result.food_objects)
+    objects = assign_stand_in_roles(seg_result.food_objects)
     union_mask = np.logical_or.reduce([obj.mask for obj in objects])
 
     layout_result = LayoutEngine().run(objects, canvas_size)

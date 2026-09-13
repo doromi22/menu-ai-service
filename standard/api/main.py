@@ -155,7 +155,7 @@ async def process_image(
 
     response: dict = {"metadata": _build_metadata(result, policy)}
 
-    # §7: REJECT (incl. infra failure) = "결과물 미사용" - no image to return.
+    # §7: REJECT (incl. infra failure) = no usable output - no image to return.
     if result.rendered_image is not None:
         buffer = io.BytesIO()
         Image.fromarray(result.rendered_image).save(buffer, format="JPEG", quality=JPEG_QUALITY)

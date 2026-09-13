@@ -11,6 +11,8 @@ import traceback
 from datetime import datetime, timezone
 from pathlib import Path
 
+import numpy as np
+
 from standard.pipeline import JPEG_QUALITY
 from standard.policy.loader import PolicyLoader
 from standard.policy.schema import Policy
@@ -30,6 +32,24 @@ DEFAULT_RETRY_POLICY_PATH = _STANDARD_DIR / "retry" / "retry_policy.yaml"
 
 def _default_policy() -> Policy:
     return PolicyLoader(DEFAULT_POLICY_LOCK_PATH).load(DEFAULT_POLICY_PATH)
+
+
+class _ReuseFirstSegmentation:
+    """
+    Wraps the backend for ONE photo's template loop. Segmentation doesn't
+    depend on the template, and a real BiRefNet call costs seconds, so the
+    first successful mask is reused for the remaining templates. Failures
+    are not cached - the next template retries the backend normally.
+    """
+
+    def __init__(self, backend: SegmentationBackend) -> None:
+        self._backend = backend
+        self._alpha: np.ndarray | None = None
+
+    def infer_mask(self, image_rgb: np.ndarray) -> np.ndarray:
+        if self._alpha is None:
+            self._alpha = self._backend.infer_mask(image_rgb)
+        return self._alpha
 
 
 def run_harness(
@@ -61,13 +81,14 @@ def run_harness(
     with open(error_log_path, "w", encoding="utf-8") as error_log:
         for image_path in images:
             category = parse_category(image_path.name)
+            photo_backend = _ReuseFirstSegmentation(segmentation_backend)
             for template in templates.values():
                 try:
                     record = run_one(
                         image_path,
                         category,
                         template,
-                        segmentation_backend=segmentation_backend,
+                        segmentation_backend=photo_backend,
                         policy=policy,
                         retry_config=retry_config,
                         output_dir=output_dir,
