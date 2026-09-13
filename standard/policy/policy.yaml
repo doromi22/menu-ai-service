@@ -1,0 +1,77 @@
+policy_version: "food_integrity_1.0.1"
+# policy_hash intentionally NOT stored in this file - a file cannot correctly
+# hash itself (the hash field would have to include its own value). Instead,
+# standard/policy/loader.py computes sha256 over this file's raw bytes at
+# load time, and standard/policy/policy.lock.json pins the expected hash for
+# each policy_version. That lock file is this policy's "git tag/digest"
+# (spec §6) in code form: PolicyLoader.register() must be called
+# deliberately to pin a version, and PolicyLoader.load() then refuses to
+# proceed if the file's bytes ever drift from what was pinned.
+
+mask:
+  min_iou: 0.995
+  max_area_delta: 0.01
+
+high_frequency:
+  base_threshold: 0.04
+  # contrast_weight/sharpness_weight: NOT derived from measured data - these
+  # are the exact values MENUAI_V1_SPEC.md §6 ships with, carried over as-is.
+  # They feed standard/validator/module_b.py's compute_hf_error(), which is
+  # itself this build's own provisional formula (§6 gives the two weights
+  # but no combining formula) - so both the weights AND how they're used are
+  # unvalidated guesses pending real measurements from the §10 360-image
+  # MVP test. Retune here, not just in module_b.py, once that data exists.
+  contrast_weight: 0.35
+  sharpness_weight: 0.50
+
+food:
+  max_saturation_gain: 0.05
+  max_luminance_gain: 0.10
+
+layout:
+  max_scale_delta_per_object: 0.03
+  max_relative_scale_ratio_change: 0.02
+  preserve_object_area_rank: true
+  max_occlusion_change: 0.15
+  # Not present in §6's own inline yaml sample, but required by §4's yaml
+  # sample and by the Layout Integrity module's stated purpose (front/back
+  # order, per the §6 module table). Treated as a §6 doc omission rather
+  # than a deliberate exclusion and included here.
+  preserve_front_back_order: true
+
+# Severity tagging - same reject_multiplier mechanism as
+# standard/config/segmentation.yaml (see standard/severity.py), applied for
+# the numeric thresholds above. The two boolean layout checks
+# (preserve_object_area_rank, preserve_front_back_order) are NOT listed
+# here: §4 already fixes their outcome to REVIEW explicitly
+# ("순위 역전 시 REVIEW"; occlusion/front-back: "앞/뒤 순서가 바뀌면 REVIEW"),
+# so there is nothing to tag - a boolean check doesn't have a "how far past
+# the line" concept a multiplier could act on.
+#
+# Every numeric threshold below is left `null` (REVIEW-only) for the
+# Phase-1 MVP: unlike segmentation's max_food_area_ratio (a property of the
+# *source photo* the spec explicitly treats as unrecoverable past a point),
+# a mask/content/appearance/layout drift here is caused by the pipeline's
+# own transform - arguably always worth a human's eyes rather than an
+# automatic discard, until real §10 data says otherwise.
+severity:
+  mask:
+    min_iou:
+      reject_multiplier: null
+    max_area_delta:
+      reject_multiplier: null
+  high_frequency:
+    base_threshold:
+      reject_multiplier: null
+  food:
+    max_saturation_gain:
+      reject_multiplier: null
+    max_luminance_gain:
+      reject_multiplier: null
+  layout:
+    max_scale_delta_per_object:
+      reject_multiplier: null
+    max_relative_scale_ratio_change:
+      reject_multiplier: null
+    max_occlusion_change:
+      reject_multiplier: null

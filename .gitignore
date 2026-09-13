@@ -1,0 +1,22 @@
+# Python
+venv/
+__pycache__/
+*.pyc
+.pytest_cache/
+
+# Real/collected photos and everything rendered from them - third-party or
+# unverified-provenance images, 200MB+. See scripts/collect_test_photos.py
+# to rebuild the Commons set (license ledger is written alongside).
+photos/
+outputs/
+
+# Unreferenced background images of unknown provenance (Premium prototype era)
+textures/
+
+# Model weights live in ~/.rembg/models, never in the repo
+*.onnx
+
+.env
+.env.*
+.DS_Store
+Thumbs.db

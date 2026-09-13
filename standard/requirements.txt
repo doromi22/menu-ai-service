@@ -1,0 +1,11 @@
+# Standard MVP pipeline only - deliberately excludes torch/diffusers/
+# onnxruntime-gpu. Nothing in this list should require a GPU (spec §1).
+numpy>=1.26
+pillow>=10.4
+scipy>=1.11
+pyyaml>=6.0
+rembg>=2.0.59
+onnxruntime>=1.18.0
+
+# dev / test
+pytest>=8.0

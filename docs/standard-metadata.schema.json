@@ -1,0 +1,105 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "https://menuai.internal/schemas/standard-metadata.json",
+  "title": "MenuAI Standard Pipeline Metadata",
+  "description": "Per-image metadata attached to a Standard-pipeline processing result (spec §8), extended with the Segmentation Gate outcome (spec §3) since that stage can stop processing before the Integrity Validator ever runs.",
+  "type": "object",
+  "required": [
+    "pipeline_version",
+    "policy_version",
+    "policy_hash",
+    "template_version",
+    "mode",
+    "segmentation_status",
+    "segmentation_reasons",
+    "is_infra_error",
+    "validator_status",
+    "validator_reasons",
+    "retry_attempts_used",
+    "merchant_review"
+  ],
+  "properties": {
+    "pipeline_version": {
+      "type": "string",
+      "examples": ["standard_1.0.0"]
+    },
+    "policy_version": {
+      "type": "string",
+      "description": "Version of the immutable Integrity Validator policy artifact (§6, §11 step 3).",
+      "examples": ["food_integrity_1.0.0"]
+    },
+    "policy_hash": {
+      "type": "string",
+      "pattern": "^sha256:[0-9a-f]{64}$",
+      "description": "sha256 digest of the policy YAML file the validator ran against - pins it as an immutable artifact (§6)."
+    },
+    "template_version": {
+      "type": "string",
+      "examples": ["graphic_1.0.0"]
+    },
+    "mode": {
+      "type": "string",
+      "enum": ["standard", "premium"]
+    },
+    "segmentation_status": {
+      "$ref": "#/$defs/gateResult",
+      "description": "Outcome of the Segmentation Gate (§3), the first checkpoint. Not part of the original §8 schema - added so a caller can tell an early gate stop apart from a later validator REVIEW/REJECT."
+    },
+    "segmentation_reasons": {
+      "type": "array",
+      "items": { "$ref": "#/$defs/reasonCode" }
+    },
+    "is_infra_error": {
+      "type": "boolean",
+      "description": "True only when segmentation_status is REJECT because the segmentation backend itself failed (model load error, inference crash/OOM after exhausting its own same-parameters infra retries) rather than because the photo is unsupported. Lets a caller (e.g. Laravel) show a different message - '일시적 오류, 잠시 후 다시 시도해주세요' vs '이 사진은 지원되지 않습니다' - without a separate top-level status value; see standard/segmentation/README.md. Always false when segmentation_status is not REJECT."
+    },
+    "validator_status": {
+      "type": ["string", "null"],
+      "enum": ["PASS", "REVIEW", "REJECT", null],
+      "description": "Outcome of the Integrity Validator's 4 modules (§6), after the Retry state machine has resolved any initial REJECT down to PASS or REVIEW (§7's final_action - a REJECT here would mean the Retry state machine itself is broken, not a normal outcome). null when segmentation_status is REJECT - the validator never ran."
+    },
+    "validator_reasons": {
+      "type": "array",
+      "items": { "$ref": "#/$defs/reasonCode" }
+    },
+    "retry_attempts_used": {
+      "type": "integer",
+      "minimum": 0,
+      "description": "How many Retry state machine attempts it took to resolve the Validator's initial verdict (0 if it PASSed immediately, or if segmentation REJECTed before the Validator ran)."
+    },
+    "merchant_review": {
+      "type": ["string", "null"],
+      "enum": [null, "PENDING", "APPROVED", "REJECTED"],
+      "description": "Merchant's own sign-off (§7) - deliberately a separate field from validator_status/segmentation_status, never merged into one status (§7: 'food_integrity_check와 merchant_review는 절대 하나로 합치지 않는다')."
+    }
+  },
+  "$defs": {
+    "gateResult": {
+      "type": "string",
+      "enum": ["PASS", "REVIEW", "REJECT"]
+    },
+    "reasonCode": {
+      "type": "string",
+      "description": "standard.reason_codes.ReasonCode - keep this enum in sync with ai-service/standard/reason_codes.py.",
+      "enum": [
+        "SEGMENTATION_NO_FOOD_DETECTED",
+        "SEGMENTATION_AREA_TOO_SMALL",
+        "SEGMENTATION_AREA_TOO_LARGE",
+        "SEGMENTATION_BOUNDARY_TOUCH_EXCEEDED",
+        "SEGMENTATION_HOLE_RATIO_EXCEEDED",
+        "SEGMENTATION_LOW_CONFIDENCE",
+        "SEGMENTATION_NONFOOD_OVERLAP",
+        "SEGMENTATION_BACKEND_ERROR",
+        "MASK_CHANGED",
+        "CONTENT_HF_ERROR",
+        "FOOD_SATURATION_EXCEEDED",
+        "FOOD_LUMINANCE_EXCEEDED",
+        "OBJECT_SCALE_CHANGED",
+        "RELATIVE_SCALE_CHANGED",
+        "OCCLUSION_CHANGED",
+        "OBJECT_AREA_RANK_REVERSED",
+        "LAYOUT_UNKNOWN_ROLE_MAJORITY"
+      ]
+    }
+  }
+}

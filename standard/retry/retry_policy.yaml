@@ -1,0 +1,18 @@
+retry:
+  max_attempts: 3
+  strategy_by_reason:
+    CONTENT_HF_ERROR: [conservative_color, neutral_color]
+    FOOD_SATURATION_EXCEEDED: [conservative_color, neutral_color]
+    FOOD_LUMINANCE_EXCEEDED: [conservative_color, neutral_color]
+    OCCLUSION_CHANGED: [recompute_translation]
+    OBJECT_SCALE_CHANGED: [force_scale_1_0]
+    RELATIVE_SCALE_CHANGED: [force_scale_1_0]
+    OBJECT_AREA_RANK_REVERSED: [recompute_translation]
+  final_action: review   # 3회 실패 시 반드시 사람 큐로, 무한루프 금지
+
+  # Reason codes with NO entry here (e.g. MASK_CHANGED, any SEGMENTATION_*
+  # code) have no fallback strategy at all - see standard/retry/README
+  # section in ../README.md for why: they indicate a pipeline bug or an
+  # unusable source photo, neither of which a different color/layout
+  # parameter can fix. standard.retry.state_machine treats them as
+  # immediately unfixable rather than silently retrying a no-op.

@@ -1,0 +1,46 @@
+segmentation:
+  min_food_area_ratio: 0.03
+  max_food_area_ratio: 0.95
+  max_boundary_touch_ratio: 0.20
+  min_component_area_ratio: 0.002
+  max_hole_ratio: 0.05
+  multi_object_detection: true
+
+  # Per-threshold severity escalation (not in the original MENUAI_V1_SPEC.md
+  # §3 yaml - added because §3 only fixes one PASS/REVIEW/REJECT case
+  # explicitly and left the rest to implementation judgment).
+  #
+  # `reject_multiplier`, when set, is a multiplier of the base threshold
+  # above marking the point where a REVIEW-worthy violation escalates to
+  # REJECT instead - i.e. nobody can crop/correct their way out of it
+  # (§7: REJECT = "결과물 미사용"). `null` means that check can only ever
+  # produce REVIEW (§3: "사람이 crop·보정") - there is no basis in the spec
+  # for auto-rejecting on that signal alone.
+  #
+  # min_food_area_ratio: reject when food_area_ratio < 0.03 * 0.5 = 0.015
+  #   (less than half the floor - "거의 음식이 없다")
+  # max_food_area_ratio: reject_multiplier 1.0 collapses the REVIEW buffer
+  #   to nothing - any exceedance of 0.95 is REJECT immediately, matching
+  #   the explicit spec: "food_area_ratio가 ... max_food_area_ratio를 초과"
+  #   is listed as a REJECT trigger with no REVIEW tier.
+  # max_boundary_touch_ratio / max_hole_ratio: REVIEW-only - a human can
+  #   still crop or accept these.
+  # min_component_area_ratio: not a metric threshold here - it's the noise
+  #   floor used to drop specks before any of the above are computed. If
+  #   filtering by it leaves zero significant components, that IS the
+  #   "no usable food mask" REJECT case (handled structurally, not via
+  #   this severity block).
+  #
+  # PROVISIONAL for the Phase-1 MVP - not derived from real data. Retune
+  # once the §10 360-image test harness produces actual REVIEW-queue
+  # volume against the §7 operating target (PASS 900 / conservative retry
+  # 60 / human REVIEW 40 per 1000).
+  severity:
+    min_food_area_ratio:
+      reject_multiplier: 0.5
+    max_food_area_ratio:
+      reject_multiplier: 1.0
+    max_boundary_touch_ratio:
+      reject_multiplier: null
+    max_hole_ratio:
+      reject_multiplier: null
