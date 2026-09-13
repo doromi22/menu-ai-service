@@ -327,3 +327,60 @@ def test_hole_ratio_just_over_threshold_reviews():
 
     assert result.result == GateResult.REVIEW
     assert result.reasons == [ReasonCode.SEGMENTATION_HOLE_RATIO_EXCEEDED]
+
+
+# --- render-only soft alpha (anti-aliased edges) ---
+
+
+def _soft_backend_alpha() -> np.ndarray:
+    alpha = np.zeros((IMAGE_SIZE, IMAGE_SIZE), dtype=np.float32)
+    alpha[30:70, 30:70] = 1.0
+    return alpha
+
+
+def _run_soft(alpha: np.ndarray):
+    return SegmentationGate(FakeBackend(alpha)).run(_blank_image())
+
+
+def _object_alpha_at(obj, x: int, y: int) -> float:
+    ox, oy = obj.alpha_origin
+    return float(obj.alpha[y - oy, x - ox])
+
+
+def test_soft_alpha_keeps_deep_interior_opaque_even_where_backend_is_unsure():
+    alpha = _soft_backend_alpha()
+    alpha[45:55, 45:55] = 0.6  # above threshold, but semi-confident (e.g. translucent broth)
+
+    obj = _run_soft(alpha).food_objects[0]
+
+    assert _object_alpha_at(obj, 50, 50) == 1.0
+
+
+def test_soft_alpha_carries_backend_gradient_on_the_outer_rim():
+    alpha = _soft_backend_alpha()
+    alpha[30:70, 70] = 0.3  # 1px just outside the hard mask's right edge
+
+    obj = _run_soft(alpha).food_objects[0]
+
+    assert not obj.mask[50, 70]  # below threshold: not part of the hard mask
+    assert _object_alpha_at(obj, 70, 50) == np.float32(0.3)
+    assert obj.bbox == (30, 30, 69, 69)  # rim never widens the geometry used for metrics
+
+
+def test_soft_alpha_never_resurrects_a_speck_the_noise_floor_dropped():
+    alpha = _soft_backend_alpha()
+    alpha[40:42, 71:73] = 1.0  # 4px speck (< min_component_area), 2px from the object's edge
+
+    result = _run_soft(alpha)
+
+    assert len(result.food_objects) == 1
+    assert _object_alpha_at(result.food_objects[0], 71, 40) == 0.0
+
+
+def test_soft_alpha_drops_faint_haze_below_the_floor():
+    alpha = _soft_backend_alpha()
+    alpha[30:70, 70] = 0.01
+
+    obj = _run_soft(alpha).food_objects[0]
+
+    assert _object_alpha_at(obj, 70, 50) == 0.0

@@ -59,6 +59,15 @@ class FoodObject:
 
     shadow_profile: str = "default"
 
+    # Optional soft (anti-aliased) coverage, used ONLY by the renderer for
+    # compositing - `mask` stays the hard source of truth for every metric,
+    # layout decision and validator check. Cropped to the region it covers
+    # (which extends a few px past `bbox` for the outer rim): alpha[r, c] is
+    # the coverage of source pixel (alpha_origin[1] + r, alpha_origin[0] + c).
+    # None means a hard-edged render from `mask`.
+    alpha: np.ndarray | None = None
+    alpha_origin: tuple[int, int] = (0, 0)  # (x, y)
+
     def __post_init__(self) -> None:
         if self.role_confidence < ROLE_CONFIDENCE_FLOOR:
             self.semantic_role = SemanticRole.UNKNOWN.value

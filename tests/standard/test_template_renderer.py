@@ -65,3 +65,43 @@ def test_empty_objects_renders_just_the_background():
     bg_only = render_background(TEMPLATES["T01_warm_ivory"], CANVAS)
 
     assert np.array_equal(scene, bg_only)  # no objects -> zero shadow density -> pure background
+
+
+def _with_soft_rim(obj, rim_value: float):
+    """Same object, plus a 1px outer rim of `rim_value` coverage around its bbox."""
+    from dataclasses import replace
+
+    x0, y0, x1, y1 = obj.bbox
+    alpha = np.full((y1 - y0 + 3, x1 - x0 + 3), rim_value, dtype=np.float32)
+    alpha[1:-1, 1:-1] = 1.0
+    return replace(obj, alpha=alpha, alpha_origin=(x0 - 1, y0 - 1))
+
+
+def test_soft_alpha_blends_rim_pixels_between_food_and_background():
+    source = np.zeros((60, 60, 3), dtype=np.uint8)
+    source[9:31, 9:31] = (200, 50, 50)
+    hard = make_food_object("a", (10, 10, 29, 29), canvas_size=CANVAS)
+    soft = _with_soft_rim(hard, 0.5)
+
+    hard_scene = TemplateRenderer().render(TEMPLATES["T01_warm_ivory"], [hard], CANVAS, source).astype(float)
+    soft_scene = TemplateRenderer().render(TEMPLATES["T01_warm_ivory"], [soft], CANVAS, source).astype(float)
+
+    expected_rim = 0.5 * hard_scene[20, 9] + 0.5 * np.array([200, 50, 50])
+    assert np.allclose(soft_scene[20, 9], expected_rim, atol=1.0)  # column 9 is just outside the bbox
+    assert np.array_equal(soft_scene[20, 20], hard_scene[20, 20])  # interior identical
+
+
+def test_soft_alpha_does_not_shift_placement_when_scaled():
+    from standard.templates.renderer import _place_object
+
+    source = np.full((60, 60, 3), 255, dtype=np.uint8)
+    hard = make_food_object("a", (10, 10, 29, 29), canvas_size=CANVAS, scale=0.5, final_center=(30, 30))
+    soft = _with_soft_rim(hard, 0.5)
+
+    hard_mask, _, _ = _place_object(hard, source, (60, 60))
+    soft_mask, _, _ = _place_object(soft, source, (60, 60))
+
+    ys_h, xs_h = np.nonzero(hard_mask)
+    ys_s, xs_s = np.nonzero(soft_mask)
+    assert abs(xs_h.mean() - xs_s.mean()) <= 1.0
+    assert abs(ys_h.mean() - ys_s.mean()) <= 1.0

@@ -71,7 +71,7 @@ Protocol *is* the switch.
 Phase 1 real-photo testing (13 real ramen photos, see project notes)
 surfaced three quality complaints: intermittent bowl-edge loss, nori
 sometimes missing, and staircase/aliasing on thin props (chopsticks). The
-third is a hard-binarization/compositing issue, tracked separately. The
+third is a hard-binarization/compositing issue (see "Soft edges" below). The
 first two traced back to `birefnet-general`'s raw (pre-threshold) alpha
 mask itself excluding real object pixels - not something `SegmentationGate`'s
 own thresholding or noise filtering could be blamed for or fix, since the
@@ -118,6 +118,36 @@ further since `birefnet-hrsod` already met the bar.
 commercial service, and `isnet-general-use` was dropped alongside it to
 save comparison time once the same-author BiRefNet family (already known
 MIT-licensed) looked promising.
+
+## Soft edges: render-only alpha (staircase fix)
+
+The gate thresholds BiRefNet's continuous alpha at `mask_binarize_threshold`,
+and the renderer used to composite with that boolean mask via `np.where` -
+throwing away the 1-3px (at BiRefNet's ~1024px working size) gradient the
+model already predicts. Thin diagonal props (chopsticks) showed it worst as
+visible stair-steps.
+
+`FoodObject` now also carries `alpha` / `alpha_origin`: the backend's own
+soft alpha, **used only for compositing** (`TemplateRenderer.render` blends
+back to front). Everything that makes a decision - area/boundary/hole
+metrics, layout, shadows, every validator module - still reads the hard
+`mask`, so no PASS/REVIEW/REJECT verdict can move because of this. Built in
+`SegmentationGate._soft_alpha`, restricted to a rim of
+`max(soft_edge_min_band_px, ceil(longer_side * soft_edge_band_ratio))` px
+around the hard mask's boundary:
+
+- deep interior stays 1.0 (semi-confident broth/glare must not turn translucent)
+- outer rim never takes pixels that are above threshold anywhere, so another
+  component or a speck the noise floor dropped can't reappear as a ghost
+- values below `soft_edge_alpha_floor` are dropped (background haze)
+
+Measured on the 13 real ramen photos x 6 templates: **0 of 78 verdicts
+changed** vs. the hard-edged render (60 PASS / 18 REVIEW both), and zoomed
+before/after crops of chopstick edges (ramen_003, ramen_008) show the
+stair-steps replaced by a smooth ramp. Tradeoff: on very large photos
+(e.g. 3024x4032) the ramp is the model's own resolution upsampled ~3x, so
+edges read slightly soft at 100% zoom - that is the real information
+BiRefNet has, not blur added here.
 
 ## Error handling: infrastructure failure vs data-quality REJECT
 

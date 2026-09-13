@@ -33,27 +33,44 @@ from standard.templates.definitions import Template
 
 def _place_object(
     obj: FoodObject, source_image_rgb: np.ndarray, canvas_shape: tuple[int, int]
-) -> tuple[np.ndarray, np.ndarray]:
+) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
     """
-    Returns (mask, image), both canvas-sized, with this object's own
+    Returns (mask, image, alpha), all canvas-sized, with this object's own
     cropped mask/pixels resized by `scale` and recentered on
     `final_center` - the one place in the pipeline scale actually changes
     what gets rendered, not just what gets checked (spec §4).
+
+    `alpha` is the object's soft render coverage when it has one (its crop
+    can extend past `bbox` by the anti-aliased outer rim), otherwise the
+    hard mask as 0/1. Placement is always anchored on `bbox`, so the rim
+    never shifts where the object lands.
     """
     canvas_h, canvas_w = canvas_shape
     x0, y0, x1, y1 = obj.bbox
-    crop_mask = obj.mask[y0 : y1 + 1, x0 : x1 + 1]
-    crop_image = source_image_rgb[y0 : y1 + 1, x0 : x1 + 1]
+    if obj.alpha is not None:
+        cx0, cy0 = obj.alpha_origin
+        cy1, cx1 = cy0 + obj.alpha.shape[0] - 1, cx0 + obj.alpha.shape[1] - 1
+    else:
+        cx0, cy0, cx1, cy1 = x0, y0, x1, y1
+    crop_mask = obj.mask[cy0 : cy1 + 1, cx0 : cx1 + 1]
+    crop_image = source_image_rgb[cy0 : cy1 + 1, cx0 : cx1 + 1]
+    crop_alpha = obj.alpha if obj.alpha is not None else crop_mask.astype(np.float32)
+
+    bbox_w, bbox_h = x1 - x0 + 1, y1 - y0 + 1
+    lead_x, lead_y = x0 - cx0, y0 - cy0  # how far the crop starts before the bbox
 
     if obj.scale != 1.0:
-        new_w = max(1, round((x1 - x0 + 1) * obj.scale))
-        new_h = max(1, round((y1 - y0 + 1) * obj.scale))
+        new_w = max(1, round((cx1 - cx0 + 1) * obj.scale))
+        new_h = max(1, round((cy1 - cy0 + 1) * obj.scale))
         crop_mask = np.asarray(Image.fromarray(crop_mask).resize((new_w, new_h), Image.NEAREST))
         crop_image = np.asarray(Image.fromarray(crop_image).resize((new_w, new_h), Image.BILINEAR))
+        crop_alpha = np.asarray(Image.fromarray(crop_alpha.astype(np.float32)).resize((new_w, new_h), Image.BILINEAR))
+        bbox_w, bbox_h = max(1, round(bbox_w * obj.scale)), max(1, round(bbox_h * obj.scale))
+        lead_x, lead_y = round(lead_x * obj.scale), round(lead_y * obj.scale)
 
     ch, cw = crop_mask.shape[:2]
-    dst_x0 = round(obj.final_center[0] - cw / 2)
-    dst_y0 = round(obj.final_center[1] - ch / 2)
+    dst_x0 = round(obj.final_center[0] - bbox_w / 2) - lead_x
+    dst_y0 = round(obj.final_center[1] - bbox_h / 2) - lead_y
     dst_x1, dst_y1 = dst_x0 + cw, dst_y0 + ch
 
     src_x0, src_y0 = 0, 0
@@ -68,10 +85,12 @@ def _place_object(
 
     full_mask = np.zeros((canvas_h, canvas_w), dtype=bool)
     full_image = np.zeros((canvas_h, canvas_w, 3), dtype=source_image_rgb.dtype)
+    full_alpha = np.zeros((canvas_h, canvas_w), dtype=np.float32)
     if dst_x1 > dst_x0 and dst_y1 > dst_y0:
         full_mask[dst_y0:dst_y1, dst_x0:dst_x1] = crop_mask[src_y0:src_y1, src_x0:src_x1]
         full_image[dst_y0:dst_y1, dst_x0:dst_x1] = crop_image[src_y0:src_y1, src_x0:src_x1]
-    return full_mask, full_image
+        full_alpha[dst_y0:dst_y1, dst_x0:dst_x1] = crop_alpha[src_y0:src_y1, src_x0:src_x1]
+    return full_mask, full_image, full_alpha
 
 
 def place_food_layer(
@@ -98,7 +117,7 @@ def place_food_layer(
     combined_mask = np.zeros((canvas_h, canvas_w), dtype=bool)
     combined_image = np.zeros((canvas_h, canvas_w, 3), dtype=source_image_rgb.dtype)
     for obj in sorted(objects, key=lambda o: o.z_index):  # back to front
-        mask, image = _place_object(obj, source_image_rgb, canvas_shape)
+        mask, image, _ = _place_object(obj, source_image_rgb, canvas_shape)
         combined_mask = combined_mask | mask
         combined_image = np.where(mask[..., None], image, combined_image)
     return combined_mask, combined_image
@@ -126,7 +145,11 @@ class TemplateRenderer:
         shadow_layer = self._shadow_engine.render(objects, canvas_shape, ambient_params)
         scene = background * (1.0 - shadow_layer.combined[..., None])
 
-        food_mask, food_image = place_food_layer(objects, canvas_shape, graded_food_image_rgb)
-        scene = np.where(food_mask[..., None], food_image.astype(np.float32), scene)
+        # Alpha-blended, back to front. With hard-edged objects (alpha None)
+        # coverage is exactly 0/1, so this reduces to the previous np.where.
+        for obj in sorted(objects, key=lambda o: o.z_index):
+            _, image, alpha = _place_object(obj, graded_food_image_rgb, canvas_shape)
+            coverage = alpha[..., None]
+            scene = scene * (1.0 - coverage) + image.astype(np.float32) * coverage
 
         return np.clip(scene, 0, 255).astype(np.uint8)

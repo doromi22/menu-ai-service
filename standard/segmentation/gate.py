@@ -68,6 +68,12 @@ DEFAULT_CONFIG = {
     "max_hole_ratio": 0.05,
     "multi_object_detection": True,
     "mask_binarize_threshold": 0.5,
+    # Render-only anti-aliasing (see _soft_alpha). Rim width is a fraction of
+    # the image's longer side because BiRefNet predicts at ~1024px and its
+    # soft transition is upsampled with the image; floor drops faint haze.
+    "soft_edge_band_ratio": 0.004,
+    "soft_edge_min_band_px": 2,
+    "soft_edge_alpha_floor": 0.02,
     "severity": {
         "min_food_area_ratio": {"reject_multiplier": 0.5},
         "max_food_area_ratio": {"reject_multiplier": 1.0},
@@ -211,17 +217,22 @@ class SegmentationGate:
         else:
             gate_result = GateResult.PASS
 
-        food_objects = [
-            FoodObject(
-                id=f"{image_id}_{i}",
-                mask=comp.mask,
-                bbox=comp.bbox,
-                original_center=self._centroid(comp.mask),
-                final_center=self._centroid(comp.mask),
-                z_index=i,
+        band_px = max(cfg["soft_edge_min_band_px"], int(np.ceil(max(h, w) * cfg["soft_edge_band_ratio"])))
+        food_objects = []
+        for i, comp in enumerate(active):
+            soft_alpha, alpha_origin = self._soft_alpha(alpha, binary, comp, band_px, cfg["soft_edge_alpha_floor"])
+            food_objects.append(
+                FoodObject(
+                    id=f"{image_id}_{i}",
+                    mask=comp.mask,
+                    bbox=comp.bbox,
+                    original_center=self._centroid(comp.mask),
+                    final_center=self._centroid(comp.mask),
+                    z_index=i,
+                    alpha=soft_alpha,
+                    alpha_origin=alpha_origin,
+                )
             )
-            for i, comp in enumerate(active)
-        ]
 
         return SegmentationGateResult(
             result=gate_result,
@@ -313,6 +324,45 @@ class SegmentationGate:
         filled_area = int(filled.sum())
         hole_ratio = (filled_area - comp_area) / filled_area if filled_area else 0.0
         return ComponentMetrics(mask=union_mask, bbox=bbox, area_ratio=comp_area / image_area, hole_ratio=hole_ratio)
+
+    @staticmethod
+    def _soft_alpha(
+        alpha: np.ndarray, binary: np.ndarray, comp: ComponentMetrics, band_px: int, floor: float
+    ) -> tuple[np.ndarray, tuple[int, int]]:
+        """
+        Render-only coverage for one component: the backend's own soft
+        alpha, but only within `band_px` of the hard mask's boundary.
+
+        - Deep interior -> 1.0. Semi-confident pixels well inside the food
+          (translucent broth, glare) must not let the background show through.
+        - Inner rim (inside the mask, near its edge) -> raw alpha (>= threshold).
+        - Outer rim (outside, near the edge) -> raw alpha, but never on pixels
+          that are above threshold anywhere in the image: those belong to
+          another component or to a speck the noise floor dropped, and must
+          not reappear as a ghost around this object.
+
+        This is what removes the staircase edge: the hard threshold alone
+        throws away the 1-3px (at 1024px) gradient BiRefNet already predicts.
+        """
+        h, w = alpha.shape
+        x0, y0, x1, y1 = comp.bbox
+        cx0, cy0 = max(0, x0 - band_px), max(0, y0 - band_px)
+        cx1, cy1 = min(w, x1 + band_px + 1), min(h, y1 + band_px + 1)
+
+        region_mask = comp.mask[cy0:cy1, cx0:cx1]
+        region_alpha = alpha[cy0:cy1, cx0:cx1].astype(np.float32)
+        region_binary = binary[cy0:cy1, cx0:cx1]
+
+        dist_inside = ndimage.distance_transform_edt(region_mask)
+        dist_outside = ndimage.distance_transform_edt(~region_mask)
+
+        soft = region_mask.astype(np.float32)
+        inner_rim = region_mask & (dist_inside <= band_px)
+        outer_rim = ~region_binary & (dist_outside <= band_px)
+        soft[inner_rim] = region_alpha[inner_rim]
+        soft[outer_rim] = region_alpha[outer_rim]
+        soft[soft < floor] = 0.0
+        return soft, (cx0, cy0)
 
     @staticmethod
     def _reject_no_food(image_area: int, raw_component_count: int) -> SegmentationGateResult:
